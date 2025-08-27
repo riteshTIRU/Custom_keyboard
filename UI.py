@@ -1,6 +1,6 @@
 
-import sys, time, serial, threading, os, subprocess
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QMessageBox
+import sys, time, serial, threading, os, subprocess,json
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer, QProcess
 from serial.tools import list_ports
 
@@ -9,10 +9,16 @@ from comtypes.client import CreateObject
 from ctypes import POINTER, cast
 from pycaw.pycaw import IAudioEndpointVolume, IMMDeviceEnumerator
 
+from pathlib import Path
+
 # CoreAudio constants
 eRender, eCapture, eAll = 0, 1, 2
 eConsole, eMultimedia, eCommunications = 0, 1, 2
 CLSID_MMDeviceEnumerator = GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
+
+
+CFG_DIR = Path(os.getenv("APPDATA", Path.home() / ".PicoControl"))
+CFG_FILE = CFG_DIR / "config.json"
 
 def _get_enumerator():
     try:
@@ -98,7 +104,17 @@ class Main(QMainWindow):
         self.btn.clicked.connect(self.pick_path)
         lay.addWidget(self.btn)
 
-        self.app_path = ""  
+        
+        CFG_DIR.mkdir(parents=True, exist_ok=True)
+
+        # load saved config (if any)
+        self.app_path = ""
+        self.load_config()               
+
+        
+        if self.app_path:
+            self.status_lbl.setText(f"App set: {self.app_path}")
+
 
         port = pick_port("COM6")
         if port:
@@ -112,17 +128,22 @@ class Main(QMainWindow):
             self.status_lbl.setText("No serial port found")
 
     def pick_path(self):
+        
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose app/shortcut",
             "",
             "Executables/Shortcuts (*.exe *.lnk *.bat *.cmd *.url);;All files (*)"
         )
+
+        
         if not path:
             return
         self.app_path = os.path.expandvars(os.path.expanduser(path))
         self.status_lbl.setText(f"App set: {self.app_path}")
         # launch immediately 
+        self.save_config()  # persist immediately
+
         self.launch_app(self.app_path)
 
     def launch_app(self, path: str):
@@ -171,6 +192,22 @@ class Main(QMainWindow):
             self.worker.stop()
             self.worker.wait(1000)
         super().closeEvent(e)
+
+    def load_config(self):
+        try:
+            if CFG_FILE.exists():
+                data = json.loads(CFG_FILE.read_text(encoding="utf-8"))
+                self.app_path = data.get("app_path", "")
+        except Exception as e:
+            self.status_lbl.setText(f"Config load failed: {e}")
+
+    def save_config(self):
+        try:
+            data = {"app_path": self.app_path}
+            CFG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            self.status_lbl.setText(f"Config save failed: {e}")
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
